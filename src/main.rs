@@ -14,6 +14,7 @@ fn main() {
 
     let mut builder = env_logger::Builder::new();
     builder.parse_filters(&options.log_level);
+    builder.filter_module("btleplug::corebluetooth::peripheral", log::LevelFilter::Warn);
     if options.no_color {
         builder.write_style(env_logger::WriteStyle::Never);
     }

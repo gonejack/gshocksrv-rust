@@ -133,15 +133,20 @@ impl<B: BluetoothBackend> Server<B> {
                 }
             };
             info!("Connected watch={} address={}", watch.name(), watch.address());
-            let state = State { last_connected: Some(Local::now().format("%m/%d %H:%M").to_string()), watch_name: Some(watch.name().to_string()) };
+            let state = State { last_connected: Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string()), watch_name: Some(watch.name().to_string()) };
             if let Err(e) = store.update(state) {
                 warn!("state file could not be saved: {e}");
             }
             match watch.pressed_button(self.config.request_timeout) {
-                Ok(button) if should_set_time(button) => match watch.set_time(self.config.fine_adjustment_secs, self.config.request_timeout) {
-                    Ok(time) => info!("Set time done watch={} time={} adjust={}", watch.name(), time.to_rfc3339(), self.config.fine_adjustment_secs),
-                    Err(e) => error!("Set time failed watch={}: {e:#}", watch.name()),
-                },
+                Ok(button) if should_set_time(button) => {
+                    info!("Set time start watch={} adjust={}", watch.name(), self.config.fine_adjustment_secs);
+                    match watch.set_time(self.config.fine_adjustment_secs, self.config.request_timeout) {
+                        Ok(time) => {
+                            info!("Set time done watch={} time={} adjust={}", watch.name(), time.to_rfc3339(), self.config.fine_adjustment_secs)
+                        }
+                        Err(e) => error!("Set time failed watch={}: {e:#}", watch.name()),
+                    }
+                }
                 Ok(_) => info!("connection ignored: unsupported button"),
                 Err(e) => error!("button query failed: {e:#}"),
             }
