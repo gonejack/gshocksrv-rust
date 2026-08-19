@@ -6,6 +6,7 @@ description = "Synchronize Casio G-Shock watches over Bluetooth"
 license = "MIT"
 
 [dependencies]
+anyhow = "1.0.100"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.1", features = ["derive"] }
 env_logger = "0.11.8"

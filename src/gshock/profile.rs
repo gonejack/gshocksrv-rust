@@ -6,6 +6,7 @@ pub enum Protocol {
     Analogue,
     Mip,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Profile {
     pub protocol: Protocol,
@@ -18,8 +19,8 @@ pub struct Profile {
 }
 
 pub fn profile_for(name: &str) -> Profile {
-    let model = name.trim().strip_prefix("CASIO ").unwrap_or(name.trim());
-    let mut p = Profile {
+    let model = model_name(name);
+    let mut profile = Profile {
         protocol: Protocol::Standard,
         world_cities: 2,
         dst_states: 1,
@@ -30,34 +31,35 @@ pub fn profile_for(name: &str) -> Profile {
     };
     match model {
         "GW-BX5600" => {
-            p.protocol = Protocol::Mip;
-            p.world_cities = 6;
-            p.dst_states = 3;
+            profile.protocol = Protocol::Mip;
+            profile.world_cities = 6;
+            profile.dst_states = 3;
         }
         "MTG-B1000" => {
-            p.protocol = Protocol::Analogue;
-            p.world_cities = 6;
-            p.dst_states = 3;
-            p.second_dial = true;
+            profile.protocol = Protocol::Analogue;
+            profile.world_cities = 6;
+            profile.dst_states = 3;
+            profile.second_dial = true;
         }
         "MTG-B3000" | "MTG-B3100" => {
-            p.protocol = Protocol::Analogue;
-            p.has_world_cities = false;
-            p.has_home_time = true;
-            p.second_dial = true;
+            profile.protocol = Protocol::Analogue;
+            profile.has_world_cities = false;
+            profile.has_home_time = true;
+            profile.second_dial = true;
         }
         _ => {}
     }
     if six_city(model) {
-        p.world_cities = 6;
-        p.dst_states = 3;
+        profile.world_cities = 6;
+        profile.dst_states = 3;
     }
     if no_city(model) {
-        p.has_world_cities = false;
+        profile.has_world_cities = false;
     }
-    p.always_connected = is_always_connected(model);
-    p
+    profile.always_connected = is_always_connected(model);
+    profile
 }
+
 fn six_city(model: &str) -> bool {
     matches!(
         model,
@@ -79,34 +81,39 @@ fn six_city(model: &str) -> bool {
             | "GWG-B1000"
     )
 }
+
 fn no_city(model: &str) -> bool {
-    ["ABL-", "GBD-", "GBX-", "GMD-B800", "EQB-"].iter().any(|p| model.starts_with(p))
+    ["ABL-", "GBD-", "GBX-", "GMD-B800", "EQB-"].into_iter().any(|prefix| model.starts_with(prefix))
 }
+
 pub fn is_always_connected(name: &str) -> bool {
-    let m = name.trim().strip_prefix("CASIO ").unwrap_or(name.trim());
-    matches!(m, "DW-H5600" | "GBD-H2000" | "DW-GH5600" | "GM-H5600") || m.starts_with("ECB-")
+    let model = model_name(name);
+    matches!(model, "DW-H5600" | "GBD-H2000" | "DW-GH5600" | "GM-H5600") || model.starts_with("ECB-")
 }
+
+fn model_name(name: &str) -> &str {
+    let name = name.trim();
+    name.strip_prefix("CASIO ").unwrap_or(name)
+}
+
 impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Standard => "standard",
-                Self::Analogue => "analogue",
-                Self::Mip => "mip",
-            }
-        )
+        f.write_str(match self {
+            Self::Standard => "standard",
+            Self::Analogue => "analogue",
+            Self::Mip => "mip",
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn known_profiles() {
-        let p = profile_for("CASIO GW-BX5600");
-        assert_eq!((p.protocol, p.world_cities, p.dst_states), (Protocol::Mip, 6, 3));
+        let profile = profile_for("CASIO GW-BX5600");
+        assert_eq!((profile.protocol, profile.world_cities, profile.dst_states), (Protocol::Mip, 6, 3));
         assert!(profile_for("CASIO ECB-30").always_connected);
     }
 }

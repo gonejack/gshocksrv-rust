@@ -14,7 +14,7 @@ pub enum Button {
     Invalid,
     LowerLeft,
     LowerRight,
-    None,
+    NoButton,
 }
 
 pub fn decode_button(data: &[u8]) -> Button {
@@ -23,7 +23,7 @@ pub fn decode_button(data: &[u8]) -> Button {
     }
     match data[8] {
         0 | 1 => Button::LowerLeft,
-        3 => Button::None,
+        3 => Button::NoButton,
         4 => Button::LowerRight,
         _ => Button::Invalid,
     }
