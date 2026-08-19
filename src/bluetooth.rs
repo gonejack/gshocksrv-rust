@@ -2,7 +2,7 @@ use crate::gshock::watch::{Watch, WatchError, WatchIo};
 use crate::gshock::{self, Button};
 use crate::server::{BluetoothBackend, ConnectedWatch};
 use anyhow::{Context, Result, anyhow, bail};
-use btleplug::api::{Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{BDAddr, Central, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use chrono::Local;
 use futures_util::StreamExt;
@@ -69,9 +69,9 @@ impl BluetoothBackend for BtleplugBackend {
             };
             peripheral.connect().await.with_context(|| format!("connect to {name}"))?;
             let io = BtleIo::connect(Arc::clone(&task_runtime), peripheral.clone()).await?;
-            let address = peripheral.address().to_string();
+            let identifier = peripheral_identifier(&peripheral);
             let profile = gshock::profile_for(&name);
-            let watch = Watch { name: name.clone(), address: address.clone(), profile, io, request_timeout: Duration::from_secs(5) };
+            let watch = Watch { name: name.clone(), identifier, profile, io, request_timeout: Duration::from_secs(5) };
             Ok(Box::new(BtleConnectedWatch { peripheral, runtime: task_runtime, watch }) as Box<dyn ConnectedWatch>)
         })
     }
@@ -88,8 +88,8 @@ impl ConnectedWatch for BtleConnectedWatch {
         &self.watch.name
     }
 
-    fn address(&self) -> &str {
-        &self.watch.address
+    fn identifier(&self) -> &str {
+        &self.watch.identifier
     }
 
     fn always_connected(&self) -> bool {
@@ -109,6 +109,15 @@ impl ConnectedWatch for BtleConnectedWatch {
     fn disconnect(&mut self) -> Result<()> {
         self.runtime.block_on(self.peripheral.disconnect()).context("disconnect")?;
         Ok(())
+    }
+}
+
+fn peripheral_identifier(peripheral: &Peripheral) -> String {
+    let addr = peripheral.address();
+    if addr == BDAddr::default() {
+        format!("id:{}", peripheral.id())
+    } else {
+        format!("mac:{addr}")
     }
 }
 

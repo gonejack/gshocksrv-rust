@@ -43,7 +43,7 @@ pub trait WatchIo {
 
 pub struct Watch<I> {
     pub name: String,
-    pub address: String,
+    pub identifier: String,
     pub profile: Profile,
     pub io: I,
     pub request_timeout: Duration,
@@ -127,7 +127,7 @@ mod tests {
     fn analogue_second_dial_is_configured() {
         let mut watch = Watch {
             name: "CASIO MTG-B3000".into(),
-            address: "test".into(),
+            identifier: "test".into(),
             profile: super::super::profile_for("CASIO MTG-B3000"),
             io: RecordingIo { disconnect_on_time: true, ..Default::default() },
             request_timeout: Duration::from_secs(1),

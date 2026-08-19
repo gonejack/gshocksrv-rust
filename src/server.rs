@@ -35,7 +35,7 @@ pub enum ServerError {
 
 pub trait ConnectedWatch {
     fn name(&self) -> &str;
-    fn address(&self) -> &str;
+    fn identifier(&self) -> &str;
     fn always_connected(&self) -> bool;
     fn pressed_button(&mut self, timeout: Duration) -> Result<Button>;
     fn set_time(&mut self, adjustment_secs: i64, timeout: Duration) -> Result<chrono::DateTime<Local>>;
@@ -170,7 +170,7 @@ impl<B: BluetoothBackend> Server<B> {
                 }
                 break;
             }
-            info!("Connected watch={} address={}", watch.name(), watch.address());
+            info!("Connected watch={} identifier={}", watch.name(), watch.identifier());
             let state = State { last_connected: Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string()), watch_name: Some(watch.name().to_string()) };
             if let Err(e) = store.update(state) {
                 warn!("state file could not be saved: {e}");
