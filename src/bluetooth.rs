@@ -140,18 +140,18 @@ impl BtleIo {
                 peripheral.subscribe(characteristic).await.with_context(|| format!("subscribe {}", characteristic.uuid))?;
             }
         }
-        let (tx, rx) = mpsc::channel();
-        let (sp_tx, sp_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let (sp_tx, sp_rx) = mpsc::sync_channel(64);
         let mut stream = peripheral.notifications().await.context("open notification stream")?;
         let sp_uuid = sp_data.as_ref().map(|characteristic| characteristic.uuid);
         tokio::spawn(async move {
             while let Some(notification) = stream.next().await {
                 let result = if Some(notification.uuid) == sp_uuid {
-                    sp_tx.send(notification.value)
+                    sp_tx.try_send(notification.value)
                 } else {
-                    tx.send(notification.value)
+                    tx.try_send(notification.value)
                 };
-                if result.is_err() {
+                if matches!(result, Err(mpsc::TrySendError::Disconnected(_))) {
                     break;
                 }
             }
@@ -203,5 +203,9 @@ impl WatchIo for BtleIo {
         self.runtime
             .block_on(self.peripheral.write(characteristic, data, WriteType::WithResponse))
             .map_err(|e| WatchError::Transport(format!("write SP data: {e}")))
+    }
+
+    fn is_connected(&self) -> Result<bool, WatchError> {
+        self.runtime.block_on(self.peripheral.is_connected()).map_err(|e| WatchError::Transport(format!("check BLE connection: {e}")))
     }
 }

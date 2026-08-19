@@ -9,7 +9,7 @@ license = "MIT"
 anyhow = "1.0.100"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.1", features = ["derive"] }
-ctrlc = "3.4.7"
+ctrlc = { version = "3.4.7", features = ["termination"] }
 env_logger = "0.11.8"
 log = "0.4.28"
 serde = { version = "1.0.228", features = ["derive"] }

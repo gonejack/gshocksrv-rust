@@ -28,3 +28,26 @@ pub fn decode_button(data: &[u8]) -> Button {
         _ => Button::Invalid,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::protocol::FEATURE_BLE;
+    use super::*;
+
+    #[test]
+    fn decodes_button_indicators() {
+        for (indicator, expected) in [
+            (0, Button::LowerLeft),
+            (1, Button::LowerLeft),
+            (3, Button::NoButton),
+            (4, Button::LowerRight),
+            (2, Button::Invalid),
+        ] {
+            let mut data = vec![0; 19];
+            data[0] = FEATURE_BLE;
+            data[8] = indicator;
+            assert_eq!(decode_button(&data), expected);
+        }
+        assert_eq!(decode_button(&[FEATURE_BLE]), Button::Invalid);
+    }
+}

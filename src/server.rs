@@ -1,13 +1,17 @@
 use crate::gshock::{self, Button};
-use anyhow::Result;
+use anyhow::{Error as AnyhowError, Result};
 use chrono::Local;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -66,12 +70,32 @@ impl Store {
     pub fn update(&mut self, data: State) -> Result<(), ServerError> {
         let mut bytes = serde_json::to_vec_pretty(&data)?;
         bytes.push(b'\n');
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, &bytes)?;
-        fs::rename(&tmp, &self.path)?;
+        let (tmp, mut file) = create_temp_file(&self.path)?;
+        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()).and_then(|_| fs::rename(&tmp, &self.path)) {
+            let _ = fs::remove_file(&tmp);
+            return Err(error.into());
+        }
         self.data = data;
         Ok(())
     }
+}
+
+fn create_temp_file(path: &Path) -> Result<(PathBuf, fs::File), std::io::Error> {
+    static NEXT_TEMP: OnceLock<AtomicU64> = OnceLock::new();
+    let sequence = NEXT_TEMP.get_or_init(|| AtomicU64::new(0));
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("state");
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+
+    for _ in 0..100 {
+        let id = sequence.fetch_add(1, Ordering::Relaxed);
+        let candidate = directory.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), id));
+        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "could not create unique state temp file"))
 }
 
 pub struct ConnectionLimiter {
@@ -132,7 +156,11 @@ impl<B: BluetoothBackend> Server<B> {
                 Ok(w) => w,
                 Err(_) if stop() => break,
                 Err(e) => {
-                    debug!("failed to connect: {e:#}");
+                    if is_no_matching_watch(&e) {
+                        debug!("no matching watch found");
+                    } else {
+                        error!("connection failed: {e:#}");
+                    }
                     continue;
                 }
             };
@@ -167,6 +195,10 @@ impl<B: BluetoothBackend> Server<B> {
         info!("Server stopped");
         Ok(())
     }
+}
+
+fn is_no_matching_watch(error: &AnyhowError) -> bool {
+    error.chain().any(|cause| cause.to_string() == "no matching watch found")
 }
 
 fn should_set_time(button: Button) -> bool {
