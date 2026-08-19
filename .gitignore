@@ -1,0 +1,5 @@
+.idea
+/bin
+/tmp
+gshock_server_data.json
+/target

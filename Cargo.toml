@@ -1,0 +1,22 @@
+[package]
+name = "gshocksrv"
+version = "0.1.0"
+edition = "2024"
+description = "Synchronize Casio G-Shock watches over Bluetooth"
+license = "MIT"
+
+[dependencies]
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.6.1", features = ["derive"] }
+env_logger = "0.11.8"
+log = "0.4.28"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+btleplug = "0.11.8"
+futures-util = "0.3.31"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
+uuid = "1.18.1"
+
+[dev-dependencies]
+tempfile = "3.23.0"
