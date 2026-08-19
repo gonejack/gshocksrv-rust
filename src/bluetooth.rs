@@ -31,7 +31,7 @@ impl BtleplugBackend {
 }
 
 impl BluetoothBackend for BtleplugBackend {
-    fn scan_and_connect(&mut self, timeout: Duration, accept: &dyn Fn(&str) -> bool) -> Result<Box<dyn ConnectedWatch>> {
+    fn scan_and_connect(&mut self, timeout: Duration, accept: &dyn Fn(&str) -> bool, stop: &dyn Fn() -> bool) -> Result<Box<dyn ConnectedWatch>> {
         let runtime = Arc::clone(&self.runtime);
         let task_runtime = Arc::clone(&runtime);
         let adapter = self.adapter.clone();
@@ -40,6 +40,10 @@ impl BluetoothBackend for BtleplugBackend {
             adapter.start_scan(ScanFilter { services: vec![service] }).await.context("start BLE scan")?;
             let deadline = tokio::time::Instant::now() + timeout;
             let found = loop {
+                if stop() {
+                    let _ = adapter.stop_scan().await;
+                    bail!("scan interrupted");
+                }
                 let peripherals = adapter.peripherals().await.context("list BLE devices")?;
                 let mut found = None;
                 for peripheral in peripherals {
@@ -163,11 +167,7 @@ impl BtleIo {
 impl WatchIo for BtleIo {
     fn write(&mut self, data: &[u8], without_response: bool) -> Result<(), WatchError> {
         let characteristic = if without_response { &self.read_request } else { &self.all_features };
-        let write_type = if without_response {
-            WriteType::WithoutResponse
-        } else {
-            WriteType::WithResponse
-        };
+        let write_type = if without_response { WriteType::WithoutResponse } else { WriteType::WithResponse };
         self.runtime
             .block_on(self.peripheral.write(characteristic, data, write_type))
             .map_err(|e| WatchError::Transport(format!("write GATT characteristic: {e}")))

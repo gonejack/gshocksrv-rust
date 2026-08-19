@@ -1,7 +1,7 @@
 use crate::gshock::{self, Button};
 use anyhow::Result;
 use chrono::Local;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -39,7 +39,7 @@ pub trait ConnectedWatch {
 }
 
 pub trait BluetoothBackend {
-    fn scan_and_connect(&mut self, timeout: Duration, accept: &dyn Fn(&str) -> bool) -> Result<Box<dyn ConnectedWatch>>;
+    fn scan_and_connect(&mut self, timeout: Duration, accept: &dyn Fn(&str) -> bool, stop: &dyn Fn() -> bool) -> Result<Box<dyn ConnectedWatch>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -123,15 +123,25 @@ impl<B: BluetoothBackend> Server<B> {
         info!("Long-press LOWER-LEFT or short-press LOWER-RIGHT on the watch to set time");
         while !stop() {
             thread::sleep(Duration::from_secs(1));
+            if stop() {
+                break;
+            }
             info!("Waiting for connection...");
             let accept = |name: &str| name != "CASIO OCW-T200" && self.limiter.allow(name);
-            let mut watch = match self.backend.scan_and_connect(self.config.scan_timeout, &accept) {
+            let mut watch = match self.backend.scan_and_connect(self.config.scan_timeout, &accept, &stop) {
                 Ok(w) => w,
+                Err(_) if stop() => break,
                 Err(e) => {
-                    info!("failed to connect: {e:#}");
+                    debug!("failed to connect: {e:#}");
                     continue;
                 }
             };
+            if stop() {
+                if !watch.always_connected() {
+                    watch.disconnect().unwrap_or_else(|e| warn!("disconnect failed: {e:#}"));
+                }
+                break;
+            }
             info!("Connected watch={} address={}", watch.name(), watch.address());
             let state = State { last_connected: Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string()), watch_name: Some(watch.name().to_string()) };
             if let Err(e) = store.update(state) {

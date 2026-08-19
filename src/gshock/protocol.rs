@@ -12,13 +12,7 @@ pub fn encode_time<Tz: chrono::TimeZone>(time: &DateTime<Tz>) -> Vec<u8> {
     packet[0] = FEATURE_TIME;
     let year = time.year() as u16;
     packet[1..3].copy_from_slice(&year.to_le_bytes());
-    packet[3..8].copy_from_slice(&[
-        time.month() as u8,
-        time.day() as u8,
-        time.hour() as u8,
-        time.minute() as u8,
-        time.second() as u8,
-    ]);
+    packet[3..8].copy_from_slice(&[time.month() as u8, time.day() as u8, time.hour() as u8, time.minute() as u8, time.second() as u8]);
     packet[8] = time.weekday().num_days_from_monday() as u8;
     packet[9] = ((time.nanosecond() as u64 * 256) / 1_000_000_000) as u8;
     packet[10] = 1;

@@ -4,6 +4,10 @@ use gshocksrv::{
     cli::Options,
     server::{Config, Server},
 };
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 fn main() {
     let options = Options::parse();
@@ -20,6 +24,13 @@ fn main() {
     }
     builder.init();
 
+    let stopped = Arc::new(AtomicBool::new(false));
+    let signal_stopped = Arc::clone(&stopped);
+    if let Err(e) = ctrlc::set_handler(move || signal_stopped.store(true, Ordering::Relaxed)) {
+        eprintln!("error: could not install Ctrl+C handler: {e}");
+        std::process::exit(1);
+    }
+
     let config = Config {
         fine_adjustment_secs: options.fine_adjustment_secs,
         scan_timeout: options.scan_timeout,
@@ -34,7 +45,7 @@ fn main() {
         }
     };
     let mut server = Server::new(config, backend);
-    if let Err(e) = server.run(|| false) {
+    if let Err(e) = server.run(|| stopped.load(Ordering::Relaxed)) {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
