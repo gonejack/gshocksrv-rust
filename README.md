@@ -2,7 +2,7 @@
 
 ![Rust version](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 [![Build](https://github.com/gonejack/gshocksrv-rust/actions/workflows/release.yml/badge.svg)](https://github.com/gonejack/gshocksrv-rust/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](Cargo.toml)
+[![GitHub license](https://img.shields.io/github/license/gonejack/gshocksrv-rust.svg?color=blue)](LICENSE)
 
 [English](#english) | [中文](#中文)
 
