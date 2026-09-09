@@ -105,6 +105,8 @@ jobs:
           bin: gshocksrv
           target: ${{ matrix.target }}
           archive: gshocksrv-$tag-${{ matrix.asset }}
+          tar: none
+          zip: all
           include: README.md
           leading-dir: true
           locked: true

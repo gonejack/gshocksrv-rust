@@ -46,10 +46,10 @@ Download and extract the archive for your platform from [Releases](https://githu
 
 | Platform | Release asset |
 | --- | --- |
-| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.tar.gz` |
-| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.tar.gz` |
-| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.tar.gz` |
-| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.tar.gz` |
+| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.zip` |
+| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.zip` |
+| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.zip` |
+| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.zip` |
 | Windows x86_64 | `gshocksrv-vX.Y.Z-windows-x86_64.zip` |
 
 #### Option 2: Build from source
@@ -155,10 +155,10 @@ MIT
 
 | 平台 | Release 产物 |
 | --- | --- |
-| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.tar.gz` |
-| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.tar.gz` |
-| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.tar.gz` |
-| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.tar.gz` |
+| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.zip` |
+| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.zip` |
+| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.zip` |
+| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.zip` |
 | Windows x86_64 | `gshocksrv-vX.Y.Z-windows-x86_64.zip` |
 
 #### 方式二：从源码构建
