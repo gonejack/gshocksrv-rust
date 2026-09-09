@@ -38,19 +38,11 @@ Other watches using the same Casio BLE time service and standard protocol may al
 
 ### Installation
 
-Choose either of the following installation methods. You do not need to complete both.
+Choose either of the following installation methods.
 
 #### Option 1: Install a prebuilt binary
 
-Download and extract the archive for your platform from [Releases](https://github.com/gonejack/gshocksrv-rust/releases):
-
-| Platform | Release asset |
-| --- | --- |
-| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.zip` |
-| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.zip` |
-| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.zip` |
-| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.zip` |
-| Windows x86_64 | `gshocksrv-vX.Y.Z-windows-x86_64.zip` |
+Download and extract the archive for your platform from [Releases](https://github.com/gonejack/gshocksrv-rust/releases).
 
 #### Option 2: Build from source
 
@@ -147,19 +139,11 @@ MIT
 
 ### 安装
 
-以下两种安装方式任选其一，无需依次执行。
+以下两种安装方式任选其一。
 
 #### 方式一：安装预编译二进制
 
-从 [Releases](https://github.com/gonejack/gshocksrv-rust/releases) 下载与你的平台对应的压缩包并解压：
-
-| 平台 | Release 产物 |
-| --- | --- |
-| Linux x86_64 | `gshocksrv-vX.Y.Z-linux-x86_64.zip` |
-| Linux ARM64 | `gshocksrv-vX.Y.Z-linux-aarch64.zip` |
-| macOS Intel | `gshocksrv-vX.Y.Z-macos-x86_64.zip` |
-| macOS Apple Silicon | `gshocksrv-vX.Y.Z-macos-aarch64.zip` |
-| Windows x86_64 | `gshocksrv-vX.Y.Z-windows-x86_64.zip` |
+从 [Releases](https://github.com/gonejack/gshocksrv-rust/releases) 下载与你的平台对应的压缩包并解压。
 
 #### 方式二：从源码构建
 
