@@ -1,6 +1,6 @@
 [package]
 name = "gshocksrv"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 description = "Synchronize Casio G-Shock watches over Bluetooth"
 license = "MIT"
@@ -19,6 +19,10 @@ btleplug = "0.11.8"
 futures-util = "0.3.31"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "sync", "time"] }
 uuid = "1.18.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# btleplug uses dbus on Linux. Vendor libdbus to avoid distro development/runtime library dependencies.
+dbus = { version = "0.9.12", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"
