@@ -44,6 +44,14 @@ Choose either of the following installation methods.
 
 Download and extract the archive for your platform from [Releases](https://github.com/gonejack/gshocksrv-rust/releases).
 
+On macOS, clear the downloaded binary's quarantine attributes before running it for the first time:
+
+```bash
+xattr -c ./gshocksrv
+```
+
+Otherwise, macOS may prevent the binary from opening and suggest moving it to the Trash.
+
 #### Option 2: Build from source
 
 Rust 1.85 or newer is required:
@@ -144,6 +152,14 @@ MIT
 #### 方式一：安装预编译二进制
 
 从 [Releases](https://github.com/gonejack/gshocksrv-rust/releases) 下载与你的平台对应的压缩包并解压。
+
+在 macOS 上首次运行前，需要清除下载文件的隔离属性：
+
+```bash
+xattr -c ./gshocksrv
+```
+
+否则 macOS 可能会阻止程序运行，并提示将其移到废纸篓。
 
 #### 方式二：从源码构建
 
