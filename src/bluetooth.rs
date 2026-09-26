@@ -3,9 +3,10 @@ use crate::gshock::{self, Button};
 use crate::server::{BluetoothBackend, ConnectedWatch};
 use anyhow::{Context, Result, anyhow, bail};
 use btleplug::api::{BDAddr, Central, CentralEvent, CharPropFlags, Manager as _, Peripheral as _, ScanFilter, WriteType};
-use btleplug::platform::{Adapter, Manager, Peripheral};
+use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use chrono::Local;
 use futures_util::{Stream, StreamExt};
+use log::{debug, warn};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{
@@ -16,6 +17,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use uuid::Uuid;
+
+const STOP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+const SCAN_STOP_TIMEOUT: Duration = Duration::from_secs(1);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct BtleplugBackend {
     runtime: Arc<Runtime>,
@@ -49,44 +54,84 @@ impl BluetoothBackend for BtleplugBackend {
         let stopped = Arc::clone(&self.stop);
         runtime.block_on(async move {
             let service = Uuid::parse_str(gshock::CASIO_SERVICE_UUID).context("parse Casio service UUID")?;
-            adapter.start_scan(ScanFilter { services: vec![service] }).await.context("start BLE scan")?;
-            let deadline = tokio::time::Instant::now() + timeout;
-            let found = loop {
-                if stop() {
-                    let _ = adapter.stop_scan().await;
-                    bail!("scan interrupted");
-                }
-                let peripherals = adapter.peripherals().await.context("list BLE devices")?;
-                let mut found = None;
-                for peripheral in peripherals {
+            let scan = async {
+                let mut events = adapter.events().await.context("subscribe to BLE events")?;
+                #[cfg(target_os = "linux")]
+                let cached_ids: std::collections::HashSet<_> =
+                    adapter.peripherals().await.context("list cached BLE devices")?.into_iter().map(|peripheral| peripheral.id()).collect();
+                adapter.start_scan(ScanFilter { services: vec![service] }).await.context("start BLE scan")?;
+                debug!("BLE scan started");
+                while let Some(event) = events.next().await {
+                    #[cfg(target_os = "linux")]
+                    if matches!(&event, CentralEvent::DeviceDiscovered(id) if cached_ids.contains(id)) {
+                        continue;
+                    }
+                    let Some(id) = advertised_device(event) else { continue };
+                    let peripheral = match adapter.peripheral(&id).await {
+                        Ok(peripheral) => peripheral,
+                        Err(btleplug::Error::DeviceNotFound) => continue,
+                        Err(error) => return Err(error).context("look up advertised BLE device"),
+                    };
                     let properties = peripheral.properties().await.context("read BLE properties")?;
                     let Some(properties) = properties else { continue };
                     let name = properties.local_name.unwrap_or_default();
                     if accept(&name) {
-                        found = Some((peripheral, name));
-                        break;
+                        debug!("BLE scan matched watch={name}");
+                        return Ok::<_, anyhow::Error>((peripheral, name));
                     }
                 }
-                if found.is_some() {
-                    break found;
-                }
-                if tokio::time::Instant::now() >= deadline {
-                    break None;
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                bail!("BLE event stream closed")
             };
-            let _ = adapter.stop_scan().await;
-            let Some((peripheral, name)) = found else {
-                bail!("no matching watch found");
+            let scan_result = stop_or(stop, tokio::time::timeout(timeout, scan)).await;
+            match tokio::time::timeout(SCAN_STOP_TIMEOUT, adapter.stop_scan()).await {
+                Ok(Err(error)) => warn!("stop BLE scan failed: {error}"),
+                Err(error) => warn!("stop BLE scan timed out: {error}"),
+                Ok(Ok(())) => {}
+            }
+            let (peripheral, name) = match scan_result? {
+                Ok(result) => result?,
+                Err(_) => bail!("no matching watch found"),
             };
-            let events = adapter.events().await.context("subscribe to BLE events")?;
-            peripheral.connect().await.with_context(|| format!("connect to {name}"))?;
-            let io = BtleIo::connect(Arc::clone(&task_runtime), peripheral.clone(), stopped, events).await?;
+            let connect = async {
+                let events = adapter.events().await.context("subscribe to BLE disconnect events")?;
+                peripheral.connect().await.with_context(|| format!("connect to {name}"))?;
+                BtleIo::connect(Arc::clone(&task_runtime), peripheral.clone(), stopped, events).await
+            };
+            let connection = stop_or(stop, tokio::time::timeout(CONNECT_TIMEOUT, connect))
+                .await
+                .and_then(|result| result.with_context(|| format!("connect to {name} timed out after {CONNECT_TIMEOUT:?}")))
+                .and_then(|result| result);
+            if connection.is_err() {
+                if let Err(error) = tokio::time::timeout(SCAN_STOP_TIMEOUT, peripheral.disconnect()).await {
+                    warn!("disconnect after failed connection timed out: {error}");
+                }
+            }
+            let io = connection?;
             let identifier = peripheral_identifier(&peripheral);
             let profile = gshock::profile_for(&name);
             let watch = Watch { name: name.clone(), identifier, profile, io, request_timeout: Duration::from_secs(5) };
             Ok(Box::new(BtleConnectedWatch { peripheral, watch }) as Box<dyn ConnectedWatch>)
         })
+    }
+}
+
+fn advertised_device(event: CentralEvent) -> Option<PeripheralId> {
+    match event {
+        CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => Some(id),
+        CentralEvent::ManufacturerDataAdvertisement { id, .. } | CentralEvent::ServiceDataAdvertisement { id, .. } | CentralEvent::ServicesAdvertisement { id, .. } => Some(id),
+        _ => None,
+    }
+}
+
+async fn stop_or<T>(stop: &dyn Fn() -> bool, future: impl Future<Output = T>) -> Result<T> {
+    tokio::select! {
+        biased;
+        _ = async {
+            while !stop() {
+                tokio::time::sleep(STOP_CHECK_INTERVAL).await;
+            }
+        } => bail!("operation interrupted"),
+        result = future => Ok(result),
     }
 }
 
@@ -322,6 +367,25 @@ impl WatchIo for BtleIo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stalled_scan_can_time_out_or_stop() {
+        let runtime = Runtime::new().unwrap();
+        let pending = || std::future::pending::<()>();
+        let timed_out = runtime.block_on(async { stop_or(&|| false, tokio::time::timeout(Duration::from_millis(20), pending())).await });
+        assert!(timed_out.unwrap().is_err());
+
+        let stopped = Arc::new(AtomicBool::new(false));
+        let signal = Arc::clone(&stopped);
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            signal.store(true, Ordering::Relaxed);
+        });
+        let stop = || stopped.load(Ordering::Relaxed);
+        let interrupted = runtime.block_on(async { stop_or(&stop, tokio::time::timeout(Duration::from_secs(2), pending())).await });
+        worker.join().unwrap();
+        assert!(interrupted.unwrap_err().to_string().contains("interrupted"));
+    }
 
     #[test]
     fn stalled_ble_operation_times_out_or_stops() {
