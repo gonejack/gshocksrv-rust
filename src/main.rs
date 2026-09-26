@@ -39,14 +39,13 @@ fn init_logger(log_level: log::LevelFilter, no_color: bool) {
     builder.filter_module("btleplug::corebluetooth::peripheral", log::LevelFilter::Warn);
     builder.format(|buf, record| {
         let level_style = buf.default_level_style(record.level());
-        writeln!(
-            buf,
-            "[{} {level_style}{}{level_style:#} {}] {}",
-            Local::now().format("%Y-%m-%d %H:%M:%S"),
-            record.level(),
-            record.target(),
-            record.args()
-        )
+        let level = match record.level() {
+            log::Level::Trace => "TRCE",
+            log::Level::Debug => "DBUG",
+            log::Level::Error => "ERRO",
+            level => level.as_str(),
+        };
+        writeln!(buf, "[{} {level_style}{level}{level_style:#} {}] {}", Local::now().format("%Y-%m-%d %H:%M:%S"), record.target(), record.args())
     });
     if no_color {
         builder.write_style(env_logger::WriteStyle::Never);

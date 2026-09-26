@@ -11,6 +11,8 @@ use thiserror::Error;
 pub enum WatchError {
     #[error("transport: {0}")]
     Transport(String),
+    #[error("watch disconnected")]
+    Disconnected,
     #[error("request timed out")]
     Timeout,
     #[error("operation interrupted")]
@@ -19,15 +21,15 @@ pub enum WatchError {
     MissingMip,
     #[error("{operation}: {source}")]
     Context {
-        operation: &'static str,
+        operation: String,
         #[source]
         source: Box<Self>,
     },
 }
 
 impl WatchError {
-    pub(super) fn context(self, operation: &'static str) -> Self {
-        Self::Context { operation, source: Box::new(self) }
+    pub(super) fn context(self, operation: impl Into<String>) -> Self {
+        Self::Context { operation: operation.into(), source: Box::new(self) }
     }
 }
 
@@ -64,8 +66,9 @@ impl<I: WatchIo> Watch<I> {
     }
 
     pub(super) fn round_trip(&mut self, request: &[u8], key: u8) -> Result<(), WatchError> {
-        let response = self.request(request, key)?;
-        self.io.write(&response, false)
+        self.request(request, key)
+            .and_then(|response| self.io.write(&response, false))
+            .map_err(|error| error.context(format!("feature 0x{key:02x} item {}", request.get(1).copied().unwrap_or_default())))
     }
 
     pub fn set_time(&mut self, adjustment: i64) -> Result<DateTime<Local>, WatchError> {
@@ -80,27 +83,37 @@ impl<I: WatchIo> Watch<I> {
         if result.is_ok() {
             return Ok(());
         }
+        if matches!(result, Err(WatchError::Disconnected)) {
+            return Ok(());
+        }
 
         // Several Casio models disconnect as soon as the time packet is accepted.
         if self.io.is_connected().ok() == Some(false) {
             return Ok(());
         }
-        result
+        result.map_err(|error| error.context("write time packet"))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[derive(Default)]
     struct RecordingIo {
         writes: Vec<Vec<u8>>,
         disconnect_on_time: bool,
+        disconnected_error_on_time: bool,
+        disconnect_before_time: bool,
+        connection_checks: Cell<usize>,
     }
 
     impl WatchIo for RecordingIo {
         fn write(&mut self, data: &[u8], without_response: bool) -> Result<(), WatchError> {
+            if !without_response && self.disconnected_error_on_time && data.first() == Some(&FEATURE_TIME) {
+                return Err(WatchError::Disconnected);
+            }
             if !without_response && self.disconnect_on_time && data.first() == Some(&FEATURE_TIME) {
                 return Err(WatchError::Transport("watch disconnected after time packet".into()));
             }
@@ -109,6 +122,9 @@ mod tests {
         }
 
         fn read_response(&mut self, expected: u8, _timeout: Duration, _analogue: bool) -> Result<Vec<u8>, WatchError> {
+            if self.disconnect_before_time && expected == FEATURE_DST_STATE {
+                return Err(WatchError::Disconnected);
+            }
             Ok(vec![expected])
         }
 
@@ -121,6 +137,7 @@ mod tests {
         }
 
         fn is_connected(&self) -> Result<bool, WatchError> {
+            self.connection_checks.set(self.connection_checks.get() + 1);
             Ok(!self.disconnect_on_time)
         }
     }
@@ -139,5 +156,33 @@ mod tests {
         let writes = &watch.io.writes;
         assert!(writes.iter().any(|data| data == &[0x21, 0x00, 0x01]));
         assert!(writes.iter().any(|data| data == &[0x21, 0x01, 0x01]));
+    }
+
+    #[test]
+    fn known_disconnect_during_time_write_is_accepted() {
+        let mut watch = Watch {
+            name: "CASIO GW-B5600".into(),
+            identifier: "test".into(),
+            profile: super::super::profile_for("CASIO GW-B5600"),
+            io: RecordingIo { disconnected_error_on_time: true, ..Default::default() },
+            request_timeout: Duration::from_secs(1),
+        };
+
+        watch.set_time(0).unwrap();
+        assert_eq!(watch.io.connection_checks.get(), 0);
+    }
+
+    #[test]
+    fn disconnect_before_time_packet_is_an_error() {
+        let mut watch = Watch {
+            name: "CASIO GW-B5600".into(),
+            identifier: "test".into(),
+            profile: super::super::profile_for("CASIO GW-B5600"),
+            io: RecordingIo { disconnect_before_time: true, ..Default::default() },
+            request_timeout: Duration::from_secs(1),
+        };
+
+        assert!(watch.set_time(0).is_err());
+        assert!(!watch.io.writes.iter().any(|data| data.first() == Some(&FEATURE_TIME)));
     }
 }
