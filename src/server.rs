@@ -188,6 +188,9 @@ impl<B: BluetoothBackend> Server<B> {
                 Ok(_) => info!("connection ignored: unsupported button"),
                 Err(e) => error!("button query failed: {e:#}"),
             }
+            if stop() {
+                break;
+            }
             if !watch.always_connected() {
                 watch.disconnect().unwrap_or_else(|e| warn!("disconnect failed: {e:#}"));
             }

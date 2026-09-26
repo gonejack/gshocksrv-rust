@@ -13,6 +13,8 @@ pub enum WatchError {
     Transport(String),
     #[error("request timed out")]
     Timeout,
+    #[error("operation interrupted")]
+    Interrupted,
     #[error("watch lacks MIP protocol characteristics")]
     MissingMip,
     #[error("{operation}: {source}")]

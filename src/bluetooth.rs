@@ -6,7 +6,12 @@ use btleplug::api::{BDAddr, Central, CharPropFlags, Manager as _, Peripheral as 
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use chrono::Local;
 use futures_util::StreamExt;
-use std::sync::{Arc, mpsc};
+use std::future::Future;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use uuid::Uuid;
@@ -14,10 +19,15 @@ use uuid::Uuid;
 pub struct BtleplugBackend {
     runtime: Arc<Runtime>,
     adapter: Adapter,
+    stop: Arc<AtomicBool>,
 }
 
 impl BtleplugBackend {
     pub fn new() -> Result<Self> {
+        Self::with_stop(Arc::new(AtomicBool::new(false)))
+    }
+
+    pub fn with_stop(stop: Arc<AtomicBool>) -> Result<Self> {
         let runtime = Arc::new(Runtime::new().context("create Tokio runtime")?);
         let manager = runtime.block_on(Manager::new()).context("create BLE manager")?;
         let adapter = runtime
@@ -26,7 +36,7 @@ impl BtleplugBackend {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("no Bluetooth adapter found"))?;
-        Ok(Self { runtime, adapter })
+        Ok(Self { runtime, adapter, stop })
     }
 }
 
@@ -35,6 +45,7 @@ impl BluetoothBackend for BtleplugBackend {
         let runtime = Arc::clone(&self.runtime);
         let task_runtime = Arc::clone(&runtime);
         let adapter = self.adapter.clone();
+        let stopped = Arc::clone(&self.stop);
         runtime.block_on(async move {
             let service = Uuid::parse_str(gshock::CASIO_SERVICE_UUID).context("parse Casio service UUID")?;
             adapter.start_scan(ScanFilter { services: vec![service] }).await.context("start BLE scan")?;
@@ -68,18 +79,17 @@ impl BluetoothBackend for BtleplugBackend {
                 bail!("no matching watch found");
             };
             peripheral.connect().await.with_context(|| format!("connect to {name}"))?;
-            let io = BtleIo::connect(Arc::clone(&task_runtime), peripheral.clone()).await?;
+            let io = BtleIo::connect(Arc::clone(&task_runtime), peripheral.clone(), stopped).await?;
             let identifier = peripheral_identifier(&peripheral);
             let profile = gshock::profile_for(&name);
             let watch = Watch { name: name.clone(), identifier, profile, io, request_timeout: Duration::from_secs(5) };
-            Ok(Box::new(BtleConnectedWatch { peripheral, runtime: task_runtime, watch }) as Box<dyn ConnectedWatch>)
+            Ok(Box::new(BtleConnectedWatch { peripheral, watch }) as Box<dyn ConnectedWatch>)
         })
     }
 }
 
 struct BtleConnectedWatch {
     peripheral: Peripheral,
-    runtime: Arc<Runtime>,
     watch: Watch<BtleIo>,
 }
 
@@ -98,16 +108,18 @@ impl ConnectedWatch for BtleConnectedWatch {
 
     fn pressed_button(&mut self, timeout: Duration) -> Result<Button> {
         self.watch.request_timeout = timeout;
+        self.watch.io.operation_timeout = timeout;
         self.watch.pressed_button().context("read button from watch")
     }
 
     fn set_time(&mut self, adjustment_secs: i64, timeout: Duration) -> Result<chrono::DateTime<Local>> {
         self.watch.request_timeout = timeout;
+        self.watch.io.operation_timeout = timeout;
         self.watch.set_time(adjustment_secs).context("set watch time")
     }
 
     fn disconnect(&mut self) -> Result<()> {
-        self.runtime.block_on(self.peripheral.disconnect()).context("disconnect")?;
+        self.watch.io.run_ble("disconnect", self.peripheral.disconnect()).context("disconnect")?;
         Ok(())
     }
 }
@@ -130,10 +142,12 @@ struct BtleIo {
     sp_data: Option<btleplug::api::Characteristic>,
     notifications: mpsc::Receiver<Vec<u8>>,
     sp_notifications: mpsc::Receiver<Vec<u8>>,
+    operation_timeout: Duration,
+    stop: Arc<AtomicBool>,
 }
 
 impl BtleIo {
-    async fn connect(runtime: Arc<Runtime>, peripheral: Peripheral) -> Result<Self> {
+    async fn connect(runtime: Arc<Runtime>, peripheral: Peripheral, stop: Arc<AtomicBool>) -> Result<Self> {
         peripheral.discover_services().await.context("discover services")?;
         let characteristics = peripheral.characteristics();
         let find = |uuid: &str| {
@@ -165,11 +179,59 @@ impl BtleIo {
                 }
             }
         });
-        Ok(Self { runtime, peripheral, read_request, all_features, sp_request, sp_data, notifications: rx, sp_notifications: sp_rx })
+        Ok(Self {
+            runtime,
+            peripheral,
+            read_request,
+            all_features,
+            sp_request,
+            sp_data,
+            notifications: rx,
+            sp_notifications: sp_rx,
+            operation_timeout: Duration::from_secs(5),
+            stop,
+        })
     }
 
-    fn receive(channel: &mpsc::Receiver<Vec<u8>>, timeout: Duration) -> Result<Vec<u8>, WatchError> {
-        channel.recv_timeout(timeout).map_err(|_| WatchError::Timeout)
+    fn receive(channel: &mpsc::Receiver<Vec<u8>>, timeout: Duration, stop: &AtomicBool) -> Result<Vec<u8>, WatchError> {
+        let started = Instant::now();
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return Err(WatchError::Interrupted);
+            }
+            let remaining = timeout.checked_sub(started.elapsed()).ok_or(WatchError::Timeout)?;
+            match channel.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(data) => return Ok(data),
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(WatchError::Transport("notification stream closed".into())),
+            }
+        }
+    }
+
+    fn run_ble<T, E>(&self, operation: &str, future: impl Future<Output = Result<T, E>>) -> Result<T, WatchError>
+    where
+        E: std::fmt::Display,
+    {
+        self.runtime.block_on(ble_operation(&self.stop, self.operation_timeout, operation, future))
+    }
+}
+
+async fn ble_operation<T, E>(stop: &AtomicBool, timeout: Duration, operation: &str, future: impl Future<Output = Result<T, E>>) -> Result<T, WatchError>
+where
+    E: std::fmt::Display,
+{
+    tokio::select! {
+        biased;
+        _ = async {
+            while !stop.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        } => Err(WatchError::Interrupted),
+        result = tokio::time::timeout(timeout, future) => match result {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(WatchError::Transport(format!("{operation}: {error}"))),
+            Err(_) => Err(WatchError::Transport(format!("{operation} timed out after {timeout:?}"))),
+        },
     }
 }
 
@@ -177,16 +239,15 @@ impl WatchIo for BtleIo {
     fn write(&mut self, data: &[u8], without_response: bool) -> Result<(), WatchError> {
         let characteristic = if without_response { &self.read_request } else { &self.all_features };
         let write_type = if without_response { WriteType::WithoutResponse } else { WriteType::WithResponse };
-        self.runtime
-            .block_on(self.peripheral.write(characteristic, data, write_type))
-            .map_err(|e| WatchError::Transport(format!("write GATT characteristic: {e}")))
+        let operation = format!("write GATT characteristic {} feature 0x{:02x}", characteristic.uuid, data.first().copied().unwrap_or_default());
+        self.run_ble(&operation, self.peripheral.write(characteristic, data, write_type))
     }
 
     fn read_response(&mut self, expected: u8, timeout: Duration, analogue: bool) -> Result<Vec<u8>, WatchError> {
         let started = Instant::now();
         loop {
             let remaining = timeout.checked_sub(started.elapsed()).ok_or(WatchError::Timeout)?;
-            let data = Self::receive(&self.notifications, remaining)?;
+            let data = Self::receive(&self.notifications, remaining, &self.stop)?;
             if gshock::protocol::response_key(&data, analogue) == Some(expected) {
                 return Ok(gshock::protocol::unwrap_response(&data, expected, analogue).to_vec());
             }
@@ -195,26 +256,62 @@ impl WatchIo for BtleIo {
 
     fn request_sp(&mut self, request: &[u8], expected_len: usize, timeout: Duration) -> Result<Vec<u8>, WatchError> {
         let characteristic = self.sp_request.as_ref().ok_or(WatchError::MissingMip)?;
-        self.runtime
-            .block_on(self.peripheral.write(characteristic, request, WriteType::WithoutResponse))
-            .map_err(|e| WatchError::Transport(format!("write SP request: {e}")))?;
+        self.run_ble("write SP request", self.peripheral.write(characteristic, request, WriteType::WithoutResponse))?;
         let started = Instant::now();
         let mut data = Vec::with_capacity(expected_len);
         while data.len() < expected_len {
             let remaining = timeout.checked_sub(started.elapsed()).ok_or(WatchError::Timeout)?;
-            data.extend(Self::receive(&self.sp_notifications, remaining)?);
+            data.extend(Self::receive(&self.sp_notifications, remaining, &self.stop)?);
         }
         Ok(data)
     }
 
     fn write_sp(&mut self, data: &[u8]) -> Result<(), WatchError> {
         let characteristic = self.sp_data.as_ref().ok_or(WatchError::MissingMip)?;
-        self.runtime
-            .block_on(self.peripheral.write(characteristic, data, WriteType::WithResponse))
-            .map_err(|e| WatchError::Transport(format!("write SP data: {e}")))
+        self.run_ble("write SP data", self.peripheral.write(characteristic, data, WriteType::WithResponse))
     }
 
     fn is_connected(&self) -> Result<bool, WatchError> {
-        self.runtime.block_on(self.peripheral.is_connected()).map_err(|e| WatchError::Transport(format!("check BLE connection: {e}")))
+        self.run_ble("check BLE connection", self.peripheral.is_connected())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stalled_ble_operation_times_out_or_stops() {
+        let runtime = Runtime::new().unwrap();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let pending = || std::future::pending::<std::io::Result<()>>();
+
+        let result = runtime.block_on(ble_operation(&stopped, Duration::from_millis(20), "test write", pending()));
+        assert!(matches!(result, Err(WatchError::Transport(message)) if message.contains("test write timed out")));
+
+        let signal = Arc::clone(&stopped);
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            signal.store(true, Ordering::Relaxed);
+        });
+        let result = runtime.block_on(ble_operation(&stopped, Duration::from_secs(2), "test write", pending()));
+        worker.join().unwrap();
+        assert!(matches!(result, Err(WatchError::Interrupted)));
+    }
+
+    #[test]
+    fn notification_wait_stops() {
+        let (sender, receiver) = mpsc::channel();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let signal = Arc::clone(&stopped);
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            signal.store(true, Ordering::Relaxed);
+        });
+
+        let result = BtleIo::receive(&receiver, Duration::from_secs(2), &stopped);
+        worker.join().unwrap();
+        drop(sender);
+        assert!(matches!(result, Err(WatchError::Interrupted)));
     }
 }
