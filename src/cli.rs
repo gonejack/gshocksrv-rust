@@ -6,7 +6,7 @@ use std::time::Duration;
 #[command(name = "gshocksrv", version, about = "Synchronize Casio G-Shock watches over Bluetooth.")]
 pub struct Options {
     /// Seconds added to watch time (-10..10).
-    #[arg(long, default_value_t = 0, value_name = "SECONDS")]
+    #[arg(long, default_value_t = 0, value_name = "SECONDS", allow_negative_numbers = true, value_parser = clap::value_parser!(i64).range(-10..=10))]
     pub fine_adjustment_secs: i64,
     /// Maximum time for each Bluetooth scan.
     #[arg(long, default_value = "60s", value_name = "DURATION", value_parser = parse_duration)]
@@ -18,8 +18,8 @@ pub struct Options {
     #[arg(long, default_value = "gshock_server_data.json")]
     pub store_path: PathBuf,
     /// Log level: trace, debug, info, warn, or error.
-    #[arg(long, default_value = "info")]
-    pub log_level: String,
+    #[arg(long, default_value = "info", value_parser = parse_log_level)]
+    pub log_level: log::LevelFilter,
     /// Disable colored log output.
     #[arg(long)]
     pub no_color: bool,
@@ -44,15 +44,14 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs(seconds))
 }
 
-impl Options {
-    pub fn validate(&self) -> Result<(), String> {
-        if !(-10..=10).contains(&self.fine_adjustment_secs) {
-            return Err("--fine-adjustment-secs must be between -10 and 10".into());
-        }
-        if !matches!(self.log_level.to_ascii_lowercase().as_str(), "trace" | "debug" | "info" | "warn" | "warning" | "error") {
-            return Err(format!("invalid --log-level {:?}", self.log_level));
-        }
-        Ok(())
+fn parse_log_level(value: &str) -> Result<log::LevelFilter, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "trace" => Ok(log::LevelFilter::Trace),
+        "debug" => Ok(log::LevelFilter::Debug),
+        "info" => Ok(log::LevelFilter::Info),
+        "warn" | "warning" => Ok(log::LevelFilter::Warn),
+        "error" => Ok(log::LevelFilter::Error),
+        _ => Err(format!("invalid --log-level {value:?}")),
     }
 }
 
@@ -63,8 +62,18 @@ mod tests {
 
     #[test]
     fn validates_adjustment() {
-        let options = Options::try_parse_from(["gshocksrv", "--fine-adjustment-secs", "11"]).unwrap();
-        assert!(options.validate().is_err());
+        for value in ["-11", "11"] {
+            assert!(Options::try_parse_from(["gshocksrv", "--fine-adjustment-secs", value]).is_err());
+        }
+        assert_eq!(Options::try_parse_from(["gshocksrv", "--fine-adjustment-secs", "-10"]).unwrap().fine_adjustment_secs, -10);
+    }
+
+    #[test]
+    fn parses_log_level() {
+        assert_eq!(Options::try_parse_from(["gshocksrv", "--log-level", "WARNING"]).unwrap().log_level, log::LevelFilter::Warn);
+        for value in ["off", "invalid"] {
+            assert!(Options::try_parse_from(["gshocksrv", "--log-level", value]).is_err());
+        }
     }
 
     #[test]

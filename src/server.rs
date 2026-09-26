@@ -139,7 +139,7 @@ impl<B: BluetoothBackend> Server<B> {
         Self { config, backend, limiter: ConnectionLimiter::new() }
     }
 
-    pub fn run(&mut self, stop: impl Fn() -> bool) -> Result<(), ServerError> {
+    pub fn run(&mut self, stop: impl Fn() -> bool) {
         let mut store = Store::open(&self.config.store_path).unwrap_or_else(|e| {
             warn!("state file could not be loaded: {e}");
             Store { path: self.config.store_path.clone(), data: State::default() }
@@ -193,7 +193,6 @@ impl<B: BluetoothBackend> Server<B> {
             }
         }
         info!("Server stopped");
-        Ok(())
     }
 }
 
